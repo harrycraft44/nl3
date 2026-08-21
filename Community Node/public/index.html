@@ -191,6 +191,15 @@
                         <div class="chat-header-info">
                             <h2 style="color: var(--text-2); font-weight:400;">No conversation selected</h2>
                         </div>
+                        <!-- Call buttons — shown when a conversation is open -->
+                        <div class="chat-header-actions" id="dm-call-actions" style="display:none;">
+                            <button class="call-icon-btn" id="dm-audio-call-btn" title="Voice call" onclick="CallManager.startCall(currentTargetUser, currentTargetNode, false)">
+                                <i class="fa-solid fa-phone"></i>
+                            </button>
+                            <button class="call-icon-btn" id="dm-video-call-btn" title="Video call" onclick="CallManager.startCall(currentTargetUser, currentTargetNode, true)">
+                                <i class="fa-solid fa-video"></i>
+                            </button>
+                        </div>
                     </div>
                     <div class="chat-welcome" id="chat-welcome">
                         <i class="fa-regular fa-comments welcome-icon"></i>
@@ -213,6 +222,12 @@
                     <div class="chat-area-header" id="group-chat-header">
                         <div class="chat-header-info">
                             <h2 style="color: var(--text-2); font-weight:400;">No group selected</h2>
+                        </div>
+                        <!-- Group call button — shown when a group is open -->
+                        <div class="chat-header-actions" id="group-call-actions" style="display:none;">
+                            <button class="call-icon-btn" id="group-call-btn" title="Start group call" onclick="CallManager.startGroupCall(currentGroupId)">
+                                <i class="fa-solid fa-video"></i>
+                            </button>
                         </div>
                     </div>
                     <div class="chat-welcome" id="group-welcome">
@@ -450,6 +465,69 @@
             </div>
             <div class="profile-modal-actions" id="pm-actions"></div>
         </div>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     INCOMING CALL OVERLAY
+══════════════════════════════════════════════════════════ -->
+<div id="incoming-call-overlay" class="call-overlay" style="display:none;">
+    <div class="incoming-call-card">
+        <div class="incoming-call-ring">
+            <div class="ring-pulse"></div>
+            <div class="ring-pulse ring-pulse-2"></div>
+            <div class="incoming-call-avatar" id="ic-avatar">?</div>
+        </div>
+        <div class="incoming-call-name" id="ic-name">Unknown</div>
+        <div class="incoming-call-sub" id="ic-sub">Incoming call…</div>
+        <div class="incoming-call-actions">
+            <button class="call-action-btn call-action-reject" id="ic-reject-btn" title="Decline">
+                <i class="fa-solid fa-phone-slash"></i>
+            </button>
+            <button class="call-action-btn call-action-accept" id="ic-accept-btn" title="Accept">
+                <i class="fa-solid fa-phone"></i>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     ACTIVE CALL WINDOW
+══════════════════════════════════════════════════════════ -->
+<div id="active-call-overlay" class="call-overlay" style="display:none;">
+    <div class="active-call-window">
+
+        <!-- Video area -->
+        <div class="call-video-area" id="call-video-area">
+            <!-- Remote stream(s) fill this — injected by JS -->
+        </div>
+
+        <!-- Local pip video -->
+        <video id="local-video" class="local-pip" autoplay muted playsinline></video>
+
+        <!-- Top bar -->
+        <div class="call-top-bar">
+            <div class="call-top-info">
+                <span class="call-with" id="call-with-label">Call</span>
+                <span class="call-timer" id="call-timer">00:00</span>
+            </div>
+            <!-- Group participant strip -->
+            <div class="call-participants" id="call-participants"></div>
+        </div>
+
+        <!-- Controls bar -->
+        <div class="call-controls">
+            <button class="ctrl-btn" id="ctrl-mic" title="Mute microphone" onclick="CallManager.toggleMic()">
+                <i class="fa-solid fa-microphone" id="ctrl-mic-icon"></i>
+            </button>
+            <button class="ctrl-btn" id="ctrl-cam" title="Toggle camera" onclick="CallManager.toggleCamera()">
+                <i class="fa-solid fa-video" id="ctrl-cam-icon"></i>
+            </button>
+            <button class="ctrl-btn ctrl-hangup" id="ctrl-hangup" title="End call" onclick="CallManager.hangUp()">
+                <i class="fa-solid fa-phone-slash"></i>
+            </button>
+        </div>
+
     </div>
 </div>
 

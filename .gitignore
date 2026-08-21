@@ -1,0 +1,45 @@
+# ========================
+# Database files
+# ========================
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+# ========================
+# Config files (may contain secrets)
+# ========================
+# Uncomment the line below if your config.json files contain secrets/tokens
+# config.json
+# ========================
+# Temp / Runtime nodes
+# ========================
+.temp-node*/
+# ========================
+# Logs
+# ========================
+logs/
+*.log
+# ========================
+# OS files
+# ========================
+.DS_Store
+Thumbs.db
+desktop.ini
+# ========================
+# Editor / IDE
+# ========================
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+# ========================
+# Build output
+# ========================
+dist/
+build/
+.cache/

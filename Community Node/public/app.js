@@ -878,3 +878,522 @@ function closeProfileModal() {
 // Expose globally so HTML onclick attributes can call them
 window.openProfile      = openProfile;
 window.closeProfileModal = closeProfileModal;
+
+// ═══════════════════════════════════════════════════════
+// CALL MANAGER — WebRTC voice + video calling
+// ═══════════════════════════════════════════════════════
+
+const STUN_CONFIG = {
+    iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+    ]
+};
+
+const CallManager = (() => {
+    // ── State ────────────────────────────────────────────
+    let state          = 'idle';   // idle | calling | ringing | in-call
+    let callId         = null;
+    let localStream    = null;
+    let isVideo        = true;
+    let isMuted        = false;
+    let isCamOff       = false;
+    let callTimerInterval = null;
+    let callStartTime  = null;
+    let pendingIncoming = null;   // stored incoming_call payload while ringing
+    let isGroupCall     = false;
+    let groupCallId     = null;
+
+    // peerConnections: Map<"user@node", RTCPeerConnection>
+    const peerConnections = new Map();
+    // remoteVideos: Map<"user@node", HTMLVideoElement>
+    const remoteVideos = new Map();
+
+    // ── DOM references ───────────────────────────────────
+    const incomingOverlay  = () => document.getElementById('incoming-call-overlay');
+    const activeOverlay    = () => document.getElementById('active-call-overlay');
+    const localVideoEl     = () => document.getElementById('local-video');
+    const callVideoArea    = () => document.getElementById('call-video-area');
+    const callWithLabel    = () => document.getElementById('call-with-label');
+    const callTimerEl      = () => document.getElementById('call-timer');
+    const callParticipants = () => document.getElementById('call-participants');
+
+    // ── Helpers ──────────────────────────────────────────
+    function genCallId() {
+        return crypto.randomUUID();
+    }
+
+    function peerId(user, node) {
+        return `${user}@${node}`;
+    }
+
+    function startTimer() {
+        callStartTime = Date.now();
+        callTimerInterval = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - callStartTime) / 1000);
+            const m = String(Math.floor(elapsed / 60)).padStart(2, '0');
+            const s = String(elapsed % 60).padStart(2, '0');
+            const el = callTimerEl();
+            if (el) el.textContent = `${m}:${s}`;
+        }, 1000);
+    }
+
+    function stopTimer() {
+        clearInterval(callTimerInterval);
+        callTimerInterval = null;
+    }
+
+    function showActiveCall(label) {
+        callWithLabel().textContent = label;
+        callTimerEl().textContent = '00:00';
+        activeOverlay().style.display = 'flex';
+        startTimer();
+    }
+
+    function hideActiveCall() {
+        activeOverlay().style.display = 'none';
+        stopTimer();
+        callVideoArea().innerHTML = '';
+        remoteVideos.clear();
+        callParticipants().innerHTML = '';
+    }
+
+    function showIncomingCall(data) {
+        pendingIncoming = data;
+        document.getElementById('ic-avatar').textContent = data.fromUser.charAt(0).toUpperCase();
+        document.getElementById('ic-name').textContent   = data.fromUser + '@' + data.fromNode;
+        document.getElementById('ic-sub').textContent    = data.isVideo ? 'Incoming video call…' : 'Incoming voice call…';
+        incomingOverlay().style.display = 'flex';
+        // Play ring using Web Audio API
+        startRingTone();
+    }
+
+    function hideIncomingCall() {
+        incomingOverlay().style.display = 'none';
+        stopRingTone();
+        pendingIncoming = null;
+    }
+
+    // ── Ring tone (Web Audio) ────────────────────────────
+    let ringCtx = null;
+    let ringInterval = null;
+
+    function startRingTone() {
+        try {
+            ringCtx = new (window.AudioContext || window.webkitAudioContext)();
+            function beep() {
+                const osc  = ringCtx.createOscillator();
+                const gain = ringCtx.createGain();
+                osc.connect(gain);
+                gain.connect(ringCtx.destination);
+                osc.type = 'sine';
+                osc.frequency.value = 440;
+                gain.gain.setValueAtTime(0.15, ringCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, ringCtx.currentTime + 0.5);
+                osc.start();
+                osc.stop(ringCtx.currentTime + 0.5);
+            }
+            beep();
+            ringInterval = setInterval(beep, 1500);
+        } catch (e) { /* audio not available */ }
+    }
+
+    function stopRingTone() {
+        clearInterval(ringInterval);
+        ringInterval = null;
+        if (ringCtx) { ringCtx.close().catch(() => {}); ringCtx = null; }
+    }
+
+    // ── Get local media ──────────────────────────────────
+    async function getLocalStream(video = true) {
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video });
+            localVideoEl().srcObject = localStream;
+            isVideo = video;
+            return localStream;
+        } catch (e) {
+            // Fallback: audio only
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                localVideoEl().srcObject = localStream;
+                isVideo = false;
+                return localStream;
+            } catch (e2) {
+                showToast({ type: 'error', icon: 'fa-microphone-slash', title: 'Media error', text: 'Could not access microphone or camera.' });
+                return null;
+            }
+        }
+    }
+
+    function stopLocalStream() {
+        if (localStream) {
+            localStream.getTracks().forEach(t => t.stop());
+            localStream = null;
+        }
+        const lv = localVideoEl();
+        if (lv) lv.srcObject = null;
+    }
+
+    // ── Peer connection factory ──────────────────────────
+    function createPeerConnection(pid, toUser, toNode) {
+        const pc = new RTCPeerConnection(STUN_CONFIG);
+        peerConnections.set(pid, pc);
+
+        // Add local tracks
+        if (localStream) {
+            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+        }
+
+        // ICE candidates → relay via server
+        pc.onicecandidate = ({ candidate }) => {
+            if (!candidate) return;
+            if (isGroupCall) {
+                socket.emit('group_call_signal', {
+                    type: 'ice', callId: groupCallId,
+                    toUser, toNode, candidate
+                });
+            } else {
+                socket.emit('call_ice', { toUser, toNode, candidate, callId });
+            }
+        };
+
+        // Remote track → create or update video element
+        pc.ontrack = ({ streams: [remoteStream] }) => {
+            let videoEl = remoteVideos.get(pid);
+            if (!videoEl) {
+                videoEl = document.createElement('video');
+                videoEl.autoplay = true;
+                videoEl.playsinline = true;
+                videoEl.className = 'remote-video';
+                videoEl.dataset.peer = pid;
+                callVideoArea().appendChild(videoEl);
+                remoteVideos.set(pid, videoEl);
+            }
+            videoEl.srcObject = remoteStream;
+        };
+
+        pc.onconnectionstatechange = () => {
+            if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+                showToast({ type: 'error', icon: 'fa-phone-slash', title: 'Connection lost', text: `Peer ${pid} dropped.` });
+                removeRemoteVideo(pid);
+                pc.close();
+                peerConnections.delete(pid);
+                if (peerConnections.size === 0) cleanup();
+            }
+        };
+
+        return pc;
+    }
+
+    function removeRemoteVideo(pid) {
+        const el = remoteVideos.get(pid);
+        if (el) { el.remove(); remoteVideos.delete(pid); }
+    }
+
+    // ── Cleanup ──────────────────────────────────────────
+    function cleanup() {
+        peerConnections.forEach(pc => pc.close());
+        peerConnections.clear();
+        stopLocalStream();
+        hideActiveCall();
+        state       = 'idle';
+        callId      = null;
+        isGroupCall = false;
+        groupCallId = null;
+        isMuted     = false;
+        isCamOff    = false;
+        // Reset control icons
+        const mi = document.getElementById('ctrl-mic-icon');
+        const ci = document.getElementById('ctrl-cam-icon');
+        if (mi) { mi.className = 'fa-solid fa-microphone'; mi.closest('button').classList.remove('ctrl-active'); }
+        if (ci) { ci.className = 'fa-solid fa-video';      ci.closest('button').classList.remove('ctrl-active'); }
+    }
+
+    // ── Start a DM call (outgoing) ───────────────────────
+    async function startCall(toUser, toNode, video = true) {
+        if (state !== 'idle') {
+            showToast({ type: 'error', icon: 'fa-phone', title: 'Already in a call', text: 'End the current call first.' });
+            return;
+        }
+        state  = 'calling';
+        callId = genCallId();
+        isGroupCall = false;
+
+        const stream = await getLocalStream(video);
+        if (!stream) { state = 'idle'; return; }
+
+        const pid = peerId(toUser, toNode);
+        const pc  = createPeerConnection(pid, toUser, toNode);
+
+        const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: video });
+        await pc.setLocalDescription(offer);
+
+        socket.emit('call_user', { toUser, toNode, offer, callId, isVideo: video });
+
+        showActiveCall(`${toUser}@${toNode}`);
+        showToast({ type: 'dm', icon: 'fa-phone', title: 'Calling…', text: `Waiting for ${toUser}@${toNode}` });
+    }
+
+    // ── Start a group call ───────────────────────────────
+    async function startGroupCall(groupId) {
+        if (state !== 'idle') {
+            showToast({ type: 'error', icon: 'fa-phone', title: 'Already in a call', text: 'End the current call first.' });
+            return;
+        }
+        const group = myGroups.find(g => g.groupId === groupId);
+        if (!group) return;
+
+        state       = 'in-call';
+        isGroupCall = true;
+        groupCallId = genCallId();
+
+        const stream = await getLocalStream(true);
+        if (!stream) { state = 'idle'; return; }
+
+        // Announce call start to all members
+        socket.emit('group_call_signal', {
+            type: 'call_start', callId: groupCallId, groupId,
+            fromUser: myUsername, fromNode: myNodeName
+        });
+
+        showActiveCall(group.name);
+        callWithLabel().textContent = group.name;
+
+        // Send offers to all other members who are not us
+        for (const member of group.members) {
+            if (member.user === myUsername && member.node === myNodeName) continue;
+            const pid = peerId(member.user, member.node);
+            const pc  = createPeerConnection(pid, member.user, member.node);
+            const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+            await pc.setLocalDescription(offer);
+            socket.emit('group_call_signal', {
+                type: 'offer', callId: groupCallId, groupId,
+                toUser: member.user, toNode: member.node, offer
+            });
+        }
+    }
+
+    // ── Handle incoming call ─────────────────────────────
+    function handleIncomingCall(data) {
+        if (state !== 'idle') {
+            // Auto-reject if busy
+            socket.emit('call_reject', { toUser: data.fromUser, toNode: data.fromNode, callId: data.callId });
+            return;
+        }
+        state = 'ringing';
+        showIncomingCall(data);
+        sendBrowserNotif(
+            `${data.fromUser}@${data.fromNode}`,
+            data.isVideo ? 'Incoming video call' : 'Incoming voice call',
+            () => {}
+        );
+    }
+
+    // ── Accept call ──────────────────────────────────────
+    async function acceptCall() {
+        const data = pendingIncoming;
+        if (!data) return;
+        hideIncomingCall();
+        state  = 'in-call';
+        callId = data.callId;
+
+        const stream = await getLocalStream(data.isVideo);
+        if (!stream) { state = 'idle'; return; }
+
+        const pid = peerId(data.fromUser, data.fromNode);
+        const pc  = createPeerConnection(pid, data.fromUser, data.fromNode);
+
+        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        socket.emit('call_answer', {
+            toUser: data.fromUser,
+            toNode: data.fromNode,
+            answer,
+            callId: data.callId
+        });
+
+        showActiveCall(`${data.fromUser}@${data.fromNode}`);
+    }
+
+    // ── Hang up ──────────────────────────────────────────
+    function hangUp() {
+        if (state === 'ringing') {
+            // Reject the pending call
+            const data = pendingIncoming;
+            if (data) socket.emit('call_reject', { toUser: data.fromUser, toNode: data.fromNode, callId: data.callId });
+            hideIncomingCall();
+            state = 'idle';
+            return;
+        }
+        if (state === 'idle') return;
+
+        // Notify all remote peers
+        peerConnections.forEach((_, pid) => {
+            const [toUser, toNode] = pid.split('@');
+            if (isGroupCall) {
+                socket.emit('group_call_signal', { type: 'hangup', callId: groupCallId, toUser, toNode });
+            } else {
+                socket.emit('call_hangup', { toUser, toNode, callId });
+            }
+        });
+        cleanup();
+    }
+
+    // ── Controls ─────────────────────────────────────────
+    function toggleMic() {
+        if (!localStream) return;
+        isMuted = !isMuted;
+        localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
+        const icon = document.getElementById('ctrl-mic-icon');
+        const btn  = document.getElementById('ctrl-mic');
+        if (isMuted) {
+            icon.className = 'fa-solid fa-microphone-slash';
+            btn.classList.add('ctrl-active');
+            btn.title = 'Unmute microphone';
+        } else {
+            icon.className = 'fa-solid fa-microphone';
+            btn.classList.remove('ctrl-active');
+            btn.title = 'Mute microphone';
+        }
+    }
+
+    function toggleCamera() {
+        if (!localStream) return;
+        isCamOff = !isCamOff;
+        localStream.getVideoTracks().forEach(t => t.enabled = !isCamOff);
+        const icon = document.getElementById('ctrl-cam-icon');
+        const btn  = document.getElementById('ctrl-cam');
+        if (isCamOff) {
+            icon.className = 'fa-solid fa-video-slash';
+            btn.classList.add('ctrl-active');
+            btn.title = 'Turn camera on';
+        } else {
+            icon.className = 'fa-solid fa-video';
+            btn.classList.remove('ctrl-active');
+            btn.title = 'Turn camera off';
+        }
+    }
+
+    // ── Socket.IO incoming events ────────────────────────
+    socket.on('incoming_call', (data) => {
+        handleIncomingCall({ ...data, isGroupCall: false });
+    });
+
+    socket.on('call_answered', async (data) => {
+        const pid = peerId(data.fromUser, data.fromNode);
+        const pc  = peerConnections.get(pid);
+        if (!pc) return;
+        await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+        state = 'in-call';
+    });
+
+    socket.on('call_rejected', (data) => {
+        showToast({ type: 'error', icon: 'fa-phone-slash', title: 'Call declined', text: `${data.fromUser}@${data.fromNode} declined.` });
+        cleanup();
+    });
+
+    socket.on('call_ended', (data) => {
+        showToast({ type: 'dm', icon: 'fa-phone-slash', title: 'Call ended', text: `${data.fromUser}@${data.fromNode} hung up.` });
+        cleanup();
+    });
+
+    socket.on('call_ice', async (data) => {
+        if (!data.candidate) return;
+        const pid = peerId(data.fromUser, data.fromNode);
+        const pc  = peerConnections.get(pid);
+        if (pc) {
+            try { await pc.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch (e) {}
+        }
+    });
+
+    socket.on('call_error', (data) => {
+        showToast({ type: 'error', icon: 'fa-phone-slash', title: 'Call failed', text: data.error });
+        cleanup();
+    });
+
+    // Group call signalling
+    socket.on('group_call_signal', async (data) => {
+        const pid = peerId(data.fromUser, data.fromNode);
+
+        if (data.type === 'call_start') {
+            // Someone in the group started a call
+            if (state !== 'idle') return;
+            const group = myGroups.find(g => g.groupId === data.groupId);
+            if (!group) return;
+            handleIncomingCall({
+                fromUser: data.fromUser,
+                fromNode: data.fromNode,
+                callId: data.callId,
+                isVideo: true,
+                isGroupCall: true,
+                groupId: data.groupId
+            });
+        } else if (data.type === 'offer') {
+            // A specific offer for us from a group peer
+            if (state === 'ringing' || state === 'idle') {
+                // Auto-join if we started the call ourselves or accepted
+                // If we're in state 'in-call' we process normally
+                // If idle, this is a late offer — ignore for now
+                if (state === 'idle') return;
+            }
+            if (!localStream) {
+                localStream = await getLocalStream(true);
+                if (!localStream) return;
+            }
+            const pc = createPeerConnection(pid, data.fromUser, data.fromNode);
+            groupCallId = data.callId;
+            isGroupCall = true;
+            await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            socket.emit('group_call_signal', {
+                type: 'answer', callId: data.callId,
+                toUser: data.fromUser, toNode: data.fromNode, answer
+            });
+            if (state !== 'in-call') { state = 'in-call'; showActiveCall(data.fromUser + '@' + data.fromNode); }
+        } else if (data.type === 'answer') {
+            const pc = peerConnections.get(pid);
+            if (pc) await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+        } else if (data.type === 'ice') {
+            const pc = peerConnections.get(pid);
+            if (pc && data.candidate) {
+                try { await pc.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch (e) {}
+            }
+        } else if (data.type === 'hangup') {
+            removeRemoteVideo(pid);
+            const pc = peerConnections.get(pid);
+            if (pc) { pc.close(); peerConnections.delete(pid); }
+            if (peerConnections.size === 0) cleanup();
+        }
+    });
+
+    // ── Incoming call button handlers ────────────────────
+    document.getElementById('ic-accept-btn').addEventListener('click', acceptCall);
+    document.getElementById('ic-reject-btn').addEventListener('click', () => {
+        const data = pendingIncoming;
+        if (data) socket.emit('call_reject', { toUser: data.fromUser, toNode: data.fromNode, callId: data.callId });
+        hideIncomingCall();
+        state = 'idle';
+    });
+
+    // ── Public API ───────────────────────────────────────
+    return { startCall, startGroupCall, hangUp, toggleMic, toggleCamera };
+})();
+
+window.CallManager = CallManager;
+
+// Show/hide DM call buttons when a conversation is opened
+const _origStartChat = startChat;
+function startChat(tUser, tNode) {
+    _origStartChat(tUser, tNode);
+    document.getElementById('dm-call-actions').style.display = 'flex';
+}
+
+// Show/hide group call button when a group is opened
+const _origOpenGroup = openGroup;
+function openGroup(groupId) {
+    _origOpenGroup(groupId);
+    document.getElementById('group-call-actions').style.display = 'flex';
+}

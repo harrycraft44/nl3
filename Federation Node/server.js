@@ -204,6 +204,75 @@ io.on('connection', (socket) => {
         }
     });
 
+    // ── Call signalling relay ────────────────────────────────────────────────
+    // All events follow the same pattern: look up the target node socket and
+    // forward the payload verbatim. The Community Nodes handle delivery to
+    // the specific browser socket.
+
+    // Caller initiates a call to another user (DM call)
+    socket.on('call_invite', (data) => {
+        const { toNode } = data;
+        console.log(`[CNode] Call invite: ${data.fromUser}@${data.fromNode} → ${data.toUser}@${toNode}`);
+        const targetSocketId = nodes.get(toNode);
+        if (targetSocketId) {
+            io.to(targetSocketId).emit('incoming_call', data);
+        } else {
+            socket.emit('call_error', { error: `Node "${toNode}" is offline.`, callId: data.callId });
+        }
+    });
+
+    // Callee sends answer SDP back to caller's node
+    socket.on('call_answer', (data) => {
+        const { toNode } = data;
+        const targetSocketId = nodes.get(toNode);
+        if (targetSocketId) io.to(targetSocketId).emit('call_answered', data);
+    });
+
+    // Callee rejects the call
+    socket.on('call_reject', (data) => {
+        const { toNode } = data;
+        const targetSocketId = nodes.get(toNode);
+        if (targetSocketId) io.to(targetSocketId).emit('call_rejected', data);
+    });
+
+    // Either party hangs up (DM or group)
+    socket.on('call_hangup', (data) => {
+        const { toNode } = data;
+        if (toNode) {
+            const targetSocketId = nodes.get(toNode);
+            if (targetSocketId) io.to(targetSocketId).emit('call_ended', data);
+        }
+    });
+
+    // ICE candidate relay (DM calls)
+    socket.on('call_ice', (data) => {
+        const { toNode } = data;
+        const targetSocketId = nodes.get(toNode);
+        if (targetSocketId) io.to(targetSocketId).emit('call_ice', data);
+    });
+
+    // Group call signalling — fan-out to all member nodes
+    socket.on('group_call_signal', (data) => {
+        const { groupId, toNode } = data;
+        if (toNode) {
+            // Targeted signal (offer/answer/ICE between two peers in a group)
+            const targetSocketId = nodes.get(toNode);
+            if (targetSocketId) io.to(targetSocketId).emit('group_call_signal', data);
+        } else if (groupId) {
+            // Broadcast to all member nodes (call_start announcement)
+            const group = groupsRegistry[groupId];
+            if (!group) return;
+            const notifiedNodes = new Set();
+            group.members.forEach(member => {
+                if (!notifiedNodes.has(member.node)) {
+                    notifiedNodes.add(member.node);
+                    const sid = nodes.get(member.node);
+                    if (sid) io.to(sid).emit('group_call_signal', data);
+                }
+            });
+        }
+    });
+
     // ── Disconnect ───────────────────────────────────────────────────────────
     socket.on('disconnect', () => {
         let disconnectedNode = null;

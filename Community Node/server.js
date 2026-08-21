@@ -276,6 +276,51 @@ function initializeChatApp() {
                 io.to(targetSocketId).emit('message_error', { error, toUser, toNode });
             }
         });
+
+        // ── Call signalling: Federation Node → Browser ───────────────────────
+        // For each event, find the target local user's socket and forward.
+
+        // An incoming call arrives for a local user
+        cnodeSocket.on('incoming_call', (data) => {
+            const sid = localUsers.get(data.toUser);
+            if (sid) io.to(sid).emit('incoming_call', data);
+        });
+
+        // Answer SDP arrives for the caller
+        cnodeSocket.on('call_answered', (data) => {
+            const sid = localUsers.get(data.toUser);
+            if (sid) io.to(sid).emit('call_answered', data);
+        });
+
+        // Callee rejected the call
+        cnodeSocket.on('call_rejected', (data) => {
+            const sid = localUsers.get(data.toUser);
+            if (sid) io.to(sid).emit('call_rejected', data);
+        });
+
+        // Remote party hung up
+        cnodeSocket.on('call_ended', (data) => {
+            const sid = localUsers.get(data.toUser);
+            if (sid) io.to(sid).emit('call_ended', data);
+        });
+
+        // ICE candidate for a local user
+        cnodeSocket.on('call_ice', (data) => {
+            const sid = localUsers.get(data.toUser);
+            if (sid) io.to(sid).emit('call_ice', data);
+        });
+
+        // Group call signalling — deliver to the specific local target user
+        cnodeSocket.on('group_call_signal', (data) => {
+            const sid = localUsers.get(data.toUser);
+            if (sid) io.to(sid).emit('group_call_signal', data);
+        });
+
+        // Call error (e.g. target node offline)
+        cnodeSocket.on('call_error', (data) => {
+            // Notify all local users of the error (rare — only if target node offline)
+            localUsers.forEach((sid) => io.to(sid).emit('call_error', data));
+        });
     }
 }
 
@@ -592,6 +637,81 @@ io.on('connection', (socket) => {
             activeSessions.delete(loggedInUser);
             serverLog(`Local user disconnected: ${loggedInUser}`);
         }
+    });
+
+    // ── Call signalling: Browser → Federation Node ───────────────────────────
+
+    // Initiate a DM call
+    socket.on('call_user', ({ toUser, toNode, offer, callId }) => {
+        if (!loggedInUser || !cnodeSocket) return;
+        cnodeSocket.emit('call_invite', {
+            callId,
+            fromUser: loggedInUser,
+            fromNode: config.nodeName,
+            toUser,
+            toNode,
+            offer
+        });
+    });
+
+    // Send answer SDP to caller
+    socket.on('call_answer', ({ toUser, toNode, answer, callId }) => {
+        if (!loggedInUser || !cnodeSocket) return;
+        cnodeSocket.emit('call_answer', {
+            callId,
+            fromUser: loggedInUser,
+            fromNode: config.nodeName,
+            toUser,
+            toNode,
+            answer
+        });
+    });
+
+    // Reject incoming call
+    socket.on('call_reject', ({ toUser, toNode, callId }) => {
+        if (!loggedInUser || !cnodeSocket) return;
+        cnodeSocket.emit('call_reject', {
+            callId,
+            fromUser: loggedInUser,
+            fromNode: config.nodeName,
+            toUser,
+            toNode
+        });
+    });
+
+    // Hang up (DM call)
+    socket.on('call_hangup', ({ toUser, toNode, callId }) => {
+        if (!loggedInUser || !cnodeSocket) return;
+        cnodeSocket.emit('call_hangup', {
+            callId,
+            fromUser: loggedInUser,
+            fromNode: config.nodeName,
+            toUser,
+            toNode
+        });
+    });
+
+    // ICE candidate (DM call)
+    socket.on('call_ice', ({ toUser, toNode, candidate, callId }) => {
+        if (!loggedInUser || !cnodeSocket) return;
+        cnodeSocket.emit('call_ice', {
+            callId,
+            fromUser: loggedInUser,
+            fromNode: config.nodeName,
+            toUser,
+            toNode,
+            candidate
+        });
+    });
+
+    // Group call signalling (offer/answer/ICE between group members)
+    socket.on('group_call_signal', (data) => {
+        if (!loggedInUser || !cnodeSocket) return;
+        cnodeSocket.emit('group_call_signal', {
+            ...data,
+            fromUser: loggedInUser,
+            fromNode: config.nodeName
+        });
     });
 });
 
