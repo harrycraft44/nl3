@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Federation Node Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #181818;
+            --bg-secondary: #202020;
+            --bg-elevated: #242424;
+            --border-color: #303030;
+            --text-primary: #F0F0F0;
+            --text-secondary: #A0A0A0;
+            --text-muted: #707070;
+            --accent: #3872a4;
+            --status-online: #3db87a;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            padding: 32px;
+            max-width: 960px;
+            margin: 0 auto;
+        }
+
+        header {
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 20px;
+            margin-bottom: 24px;
+        }
+
+        h1 {
+            font-size: 22px;
+            font-weight: 500;
+        }
+
+        .subtitle {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        /* Metrics */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .metric-card {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .metric-card .label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .metric-card .value {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .health-status {
+            color: var(--status-online);
+        }
+
+        /* Two columns */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr 1.5fr;
+            gap: 24px;
+        }
+
+        .card {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            height: 380px;
+        }
+
+        .card h2 {
+            font-size: 14px;
+            font-weight: 500;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+        }
+
+        /* Node List table-like styling */
+        .node-list {
+            list-style: none;
+            overflow-y: auto;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .node-list li {
+            background-color: var(--bg-elevated);
+            border: 1px solid var(--border-color);
+            padding: 10px 12px;
+            border-radius: 4px;
+            font-size: 13px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .badge-online {
+            background-color: rgba(61, 184, 122, 0.1);
+            color: var(--status-online);
+            border: 1px solid rgba(61, 184, 122, 0.3);
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 2px;
+        }
+
+        /* Log window */
+        .log-box {
+            background-color: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--text-secondary);
+            overflow-y: auto;
+            flex: 1;
+            white-space: pre-line;
+            line-height: 1.6;
+        }
+    </style>
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <header>
+        <h1>Federation Hub Status</h1>
+        <p class="subtitle">Real-time status monitor for node registration and federated route traffic.</p>
+    </header>
+
+    <div class="metrics-grid">
+        <div class="metric-card">
+            <span class="label">Total Peering Nodes</span>
+            <span class="value" id="node-count">0</span>
+        </div>
+        <div class="metric-card">
+            <span class="label">System Latency</span>
+            <span class="value">0.12 ms</span>
+        </div>
+        <div class="metric-card">
+            <span class="label">Hub Status</span>
+            <span class="value health-status">● Healthy</span>
+        </div>
+    </div>
+
+    <div class="dashboard-grid">
+        <div class="card">
+            <h2>Peering Nodes</h2>
+            <ul class="node-list" id="nodes-list">
+                <li>No nodes connected</li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <h2>Route Traffic Log</h2>
+            <div class="log-box" id="activity-log"></div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

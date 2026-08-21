@@ -1,0 +1,7 @@
+{
+  "nodeType": "Community Node",
+  "nodeName": "node2",
+  "port": "3002",
+  "cnodeUrl": "http://localhost:3000",
+  "uuid": "ff29bf55-474e-41bd-bb10-4fa136562608"
+}

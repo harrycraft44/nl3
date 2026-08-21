@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Node Installation Wizard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #181818;
+            --bg-secondary: #202020;
+            --border-color: #303030;
+            --text-primary: #F0F0F0;
+            --text-secondary: #A0A0A0;
+            --accent: #3872a4;
+            --accent-hover: #2b577d;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            max-width: 520px;
+            margin: 80px auto;
+            padding: 20px;
+        }
+
+        .card {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 32px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 24px;
+        }
+
+        .brand-icon {
+            font-size: 24px;
+            color: var(--accent);
+        }
+
+        .brand-name {
+            font-weight: 600;
+            font-size: 16px;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            color: var(--text-primary);
+        }
+
+        h1 {
+            font-size: 18px;
+            font-weight: 500;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+
+        .subtitle {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+            line-height: 1.5;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        input, select {
+            background-color: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            color: var(--text-primary);
+            padding: 10px 12px;
+            font-size: 14px;
+            outline: none;
+            width: 100%;
+            box-sizing: border-box;
+            transition: border-color 0.15s ease;
+        }
+
+        input:focus, select:focus {
+            border-color: var(--accent);
+        }
+
+        button {
+            background-color: var(--accent);
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            padding: 11px 16px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 8px;
+            transition: background-color 0.15s ease;
+        }
+
+        button:hover {
+            background-color: var(--accent-hover);
+        }
+
+        h3 {
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 6px;
+            margin: 24px 0 16px 0;
+        }
+
+        .name-status {
+            font-size: 12px;
+            font-weight: 500;
+            padding: 5px 10px;
+            border-radius: 4px;
+            display: none;
+            align-items: center;
+            gap: 6px;
+            margin-top: 4px;
+        }
+        .name-status.checking {
+            display: flex;
+            background: rgba(56, 114, 164, 0.12);
+            color: #6aafd6;
+            border: 1px solid rgba(56, 114, 164, 0.3);
+        }
+        .name-status.available {
+            display: flex;
+            background: rgba(52, 168, 100, 0.12);
+            color: #4ec97a;
+            border: 1px solid rgba(52, 168, 100, 0.3);
+        }
+        .name-status.taken {
+            display: flex;
+            background: rgba(220, 80, 80, 0.12);
+            color: #e07070;
+            border: 1px solid rgba(220, 80, 80, 0.3);
+        }
+        .name-status.warning {
+            display: flex;
+            background: rgba(200, 150, 50, 0.12);
+            color: #d4a94a;
+            border: 1px solid rgba(200, 150, 50, 0.3);
+        }
+
+        button:disabled {
+            background-color: #333;
+            color: #666;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="brand">
+            <span class="brand-icon">⎔</span>
+            <span class="brand-name">Federated Node</span>
+        </div>
+        <h1>Configure Node Instance</h1>
+        <p class="subtitle">Complete the setup process to initialize this community server and peering node.</p>
+        
+        <form id="setup-form">
+            <div class="form-group">
+                <label for="nodeType">Node Type</label>
+                <select id="nodeType">
+                    <option value="Community Node">Community Node</option>
+                    <option value="Private Node">Private Node</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="nodeName">Node Identifier / Name</label>
+                <input type="text" id="nodeName" placeholder="e.g. node2" required autocomplete="off" />
+                <div id="name-status" class="name-status"></div>
+            </div>
+
+            <h3>Administrator Account</h3>
+            
+            <div class="form-group">
+                <label for="adminUser">Username</label>
+                <input type="text" id="adminUser" placeholder="admin" value="admin" required />
+            </div>
+            
+            <div class="form-group">
+                <label for="adminPass">Password</label>
+                <input type="password" id="adminPass" placeholder="Admin password" required />
+            </div>
+
+            <button type="submit">Install Node</button>
+        </form>
+    </div>
+    <script src="setup.js"></script>
+</body>
+</html>

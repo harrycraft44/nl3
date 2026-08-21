@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Federated Node</title>
+    <meta name="description" content="Cross-node federated community messaging console">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <link rel="stylesheet" href="style.css">
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+<div id="app">
+
+    <!-- Toast container -->
+    <div id="toast-container"></div>
+
+    <!-- ── Auth Screen ───────────────────────────────────────── -->
+    <div id="login-screen" class="screen active">
+
+        <!-- Login -->
+        <div class="login-panel" id="login-frame">
+            <div class="logo">
+                <i class="fa-solid fa-hexagon-nodes logo-icon"></i>
+                <span class="logo-text">Federated Node</span>
+            </div>
+            <h1>Sign in to <span class="node-name-label">Node</span></h1>
+            <p class="login-subtitle">Enter your credentials to access the console.</p>
+            <form id="login-form">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" placeholder="username" required autocomplete="off" />
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" placeholder="••••••••" required />
+                </div>
+                <button type="submit" class="btn-primary">Connect</button>
+            </form>
+            <div class="auth-toggle">
+                <p>No account? <a href="#" id="go-to-signup">Create one</a></p>
+            </div>
+        </div>
+
+        <!-- Signup -->
+        <div class="login-panel" id="signup-frame" style="display:none;">
+            <div class="logo">
+                <i class="fa-solid fa-hexagon-nodes logo-icon"></i>
+                <span class="logo-text">Federated Node</span>
+            </div>
+            <h1>Register on <span class="node-name-label">Node</span></h1>
+            <p class="login-subtitle">Create a new identity on this community server.</p>
+            <form id="signup-form">
+                <div class="form-group">
+                    <label for="signup-username">Username</label>
+                    <input type="text" id="signup-username" placeholder="e.g. alice" required autocomplete="off" />
+                </div>
+                <div class="form-group">
+                    <label for="signup-displayname">Display Name</label>
+                    <input type="text" id="signup-displayname" placeholder="e.g. Alice Smith" required autocomplete="off" />
+                </div>
+                <div class="form-group">
+                    <label for="signup-password">Password</label>
+                    <input type="password" id="signup-password" placeholder="••••••••" required />
+                </div>
+                <div class="form-group">
+                    <label for="signup-bio">Bio</label>
+                    <input type="text" id="signup-bio" placeholder="optional" autocomplete="off" />
+                </div>
+                <button type="submit" class="btn-primary">Create Account</button>
+            </form>
+            <div class="auth-toggle">
+                <p>Already registered? <a href="#" id="go-to-login">Sign in</a></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── App Layout ────────────────────────────────────────── -->
+    <div id="app-layout" class="screen">
+
+        <!-- Icon Rail -->
+        <nav class="icon-rail">
+            <div class="rail-brand"><i class="fa-solid fa-hexagon-nodes"></i></div>
+            <div class="rail-sep"></div>
+
+            <button class="rail-btn active" data-tab="messages" data-tip="Messages">
+                <i class="fa-solid fa-message"></i>
+                <span class="rail-badge" id="badge-messages" style="display:none;">0</span>
+            </button>
+            <button class="rail-btn" data-tab="groups" data-tip="Groups">
+                <i class="fa-solid fa-people-group"></i>
+                <span class="rail-badge" id="badge-groups" style="display:none;">0</span>
+            </button>
+            <button class="rail-btn admin-only" id="admin-rail-btn" data-tab="admin-panel" data-tip="Admin" style="display:none;">
+                <i class="fa-solid fa-screwdriver-wrench"></i>
+            </button>
+
+            <div class="rail-spacer"></div>
+            <button class="rail-btn" data-tab="settings" data-tip="Settings">
+                <i class="fa-solid fa-gear"></i>
+            </button>
+            <!-- Rail avatar — shows pfp if set -->
+            <div class="rail-avatar" id="my-avatar-rail">
+                <img id="my-avatar-img" src="" alt="" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:50%;">
+                <span id="my-avatar-initial">U</span>
+            </div>
+        </nav>
+
+        <!-- Section Panel -->
+        <aside class="section-panel" id="section-panel">
+
+            <!-- DM Panel -->
+            <div id="panel-messages" class="panel-view">
+                <div class="panel-header">
+                    <span class="panel-title">Direct Messages</span>
+                </div>
+                <div class="new-chat-input-row">
+                    <input type="text" id="target-handle" placeholder="user@node" autocomplete="off" />
+                    <button class="btn-go" id="start-chat-btn">Open</button>
+                </div>
+                <div class="panel-list" id="active-chats">
+                    <div class="panel-empty">No conversations yet.<br>Type a handle above to start.</div>
+                </div>
+            </div>
+
+            <!-- Groups Panel -->
+            <div id="panel-groups" class="panel-view" style="display:none;">
+                <div class="panel-header">
+                    <span class="panel-title">Groups</span>
+                    <button class="panel-action-btn" id="new-group-btn" title="New group">
+                        <i class="fa-solid fa-plus"></i>
+                    </button>
+                </div>
+                <div class="panel-list" id="groups-list">
+                    <div class="panel-empty">No groups yet.<br>Click + to create one.</div>
+                </div>
+            </div>
+
+            <!-- Admin Panel nav -->
+            <div id="panel-admin-panel" class="panel-view" style="display:none;">
+                <div class="panel-header">
+                    <span class="panel-title">Administration</span>
+                </div>
+                <div class="panel-list">
+                    <div class="section-item active" id="admin-nav-overview" data-admin-tab="overview">
+                        <div class="si-avatar"><i class="fa-solid fa-chart-bar"></i></div>
+                        <div class="si-info"><span class="si-name">Overview</span></div>
+                    </div>
+                    <div class="section-item" id="admin-nav-users" data-admin-tab="users">
+                        <div class="si-avatar"><i class="fa-solid fa-user"></i></div>
+                        <div class="si-info"><span class="si-name">Users</span></div>
+                    </div>
+                    <div class="section-item" id="admin-nav-sessions" data-admin-tab="sessions">
+                        <div class="si-avatar"><i class="fa-solid fa-satellite-dish"></i></div>
+                        <div class="si-info"><span class="si-name">Live Sessions</span></div>
+                    </div>
+                    <div class="section-item" id="admin-nav-logs" data-admin-tab="logs">
+                        <div class="si-avatar"><i class="fa-solid fa-clipboard-list"></i></div>
+                        <div class="si-info"><span class="si-name">Activity Logs</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Panel nav -->
+            <div id="panel-settings" class="panel-view" style="display:none;">
+                <div class="panel-header">
+                    <span class="panel-title">Settings</span>
+                </div>
+                <div class="panel-list">
+                    <div class="section-item active">
+                        <div class="si-avatar"><i class="fa-solid fa-user"></i></div>
+                        <div class="si-info"><span class="si-name">Account</span></div>
+                    </div>
+                </div>
+                <div style="padding: 12px 16px; border-top: 1px solid var(--border); margin-top: auto;">
+                    <div style="font-size: 11px; color: var(--text-3);">Logged in as</div>
+                    <div style="font-size: 13px; font-weight: 600; color: var(--text-1); margin-top: 2px;" id="my-name">—</div>
+                    <div style="font-size: 11px; color: var(--text-2);" id="my-node">@node</div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+
+            <!-- Tab: Messages (DM) -->
+            <section id="tab-messages" class="tab-content active">
+                <div class="chat-area">
+                    <div class="chat-area-header" id="chat-header">
+                        <div class="chat-header-info">
+                            <h2 style="color: var(--text-2); font-weight:400;">No conversation selected</h2>
+                        </div>
+                    </div>
+                    <div class="chat-welcome" id="chat-welcome">
+                        <i class="fa-regular fa-comments welcome-icon"></i>
+                        <h3>Start a conversation</h3>
+                        <p>Enter a <strong>user@node</strong> handle in the left panel to open a direct message.</p>
+                    </div>
+                    <div class="messages" id="messages" style="display:none;"></div>
+                    <form class="message-input" id="message-form" style="display:none;">
+                        <input type="text" id="message-text" placeholder="Message…" autocomplete="off" />
+                        <button type="submit" class="btn-send">
+                            <i class="fa-solid fa-paper-plane"></i>
+                        </button>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Tab: Groups -->
+            <section id="tab-groups" class="tab-content">
+                <div class="chat-area">
+                    <div class="chat-area-header" id="group-chat-header">
+                        <div class="chat-header-info">
+                            <h2 style="color: var(--text-2); font-weight:400;">No group selected</h2>
+                        </div>
+                    </div>
+                    <div class="chat-welcome" id="group-welcome">
+                        <i class="fa-solid fa-people-group welcome-icon"></i>
+                        <h3>Group chats</h3>
+                        <p>Select a group from the panel, or create a new one with the + button.</p>
+                    </div>
+                    <div class="messages" id="group-messages" style="display:none;"></div>
+                    <form class="message-input" id="group-message-form" style="display:none;">
+                        <input type="text" id="group-message-text" placeholder="Message group…" autocomplete="off" />
+                        <button type="submit" class="btn-send">
+                            <i class="fa-solid fa-paper-plane"></i>
+                        </button>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Tab: Admin -->
+            <section id="tab-admin-panel" class="tab-content">
+                <div class="page-pane">
+
+                    <!-- Admin: Overview sub-tab -->
+                    <div id="admin-sub-overview" class="admin-sub active">
+                        <div class="page-header">
+                            <h1>Node Overview</h1>
+                            <p class="subtitle">Live metrics, server configuration and federation status.</p>
+                        </div>
+                        <div class="metrics-grid" style="grid-template-columns:repeat(4,1fr);">
+                            <div class="metric-card">
+                                <span class="label">Local Users</span>
+                                <span class="value" id="admin-user-count">0</span>
+                            </div>
+                            <div class="metric-card">
+                                <span class="label">Stored Messages</span>
+                                <span class="value" id="admin-msg-count">0</span>
+                            </div>
+                            <div class="metric-card">
+                                <span class="label">Active Sessions</span>
+                                <span class="value" id="admin-session-count">0</span>
+                            </div>
+                            <div class="metric-card">
+                                <span class="label">Uptime</span>
+                                <span class="value" id="admin-uptime">—</span>
+                            </div>
+                        </div>
+                        <div class="admin-section">
+                            <div class="section-card">
+                                <div class="section-card-header">Federation Link</div>
+                                <div class="detail-grid">
+                                    <div class="detail-row">
+                                        <span class="d-label">Status</span>
+                                        <span class="d-value" id="admin-cnode-status">Checking…</span>
+                                    </div>
+                                    <div class="detail-row">
+                                        <span class="d-label">Node Identifier</span>
+                                        <span class="d-value" id="admin-node-name">Loading…</span>
+                                    </div>
+                                    <div class="detail-row">
+                                        <span class="d-label">Engine Type</span>
+                                        <span class="d-value" id="admin-node-type">Loading…</span>
+                                    </div>
+                                    <div class="detail-row">
+                                        <span class="d-label">CNode URL</span>
+                                        <span class="d-value" id="admin-cnode-url">Loading…</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="section-card">
+                                <div class="section-card-header">Peer Nodes</div>
+                                <table class="grid-table">
+                                    <thead><tr><th>Node Name</th><th>Status</th><th>Connection</th></tr></thead>
+                                    <tbody id="admin-peer-table"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Admin: Users sub-tab -->
+                    <div id="admin-sub-users" class="admin-sub" style="display:none;">
+                        <div class="page-header">
+                            <h1>User Management</h1>
+                            <p class="subtitle">All registered identities on this node. Ban or delete as needed.</p>
+                        </div>
+                        <div class="section-card">
+                            <div class="section-card-header">Registered Users</div>
+                            <div id="admin-user-cards" class="user-cards-grid"></div>
+                        </div>
+                    </div>
+
+                    <!-- Admin: Sessions sub-tab -->
+                    <div id="admin-sub-sessions" class="admin-sub" style="display:none;">
+                        <div class="page-header">
+                            <h1>Live Sessions</h1>
+                            <p class="subtitle">Currently connected users on this node.</p>
+                        </div>
+                        <div class="section-card">
+                            <div class="section-card-header">
+                                Online Now
+                                <button class="btn-secondary" style="margin-left:auto;padding:4px 10px;font-size:12px;" onclick="refreshAdminSessions()">
+                                    <i class="fa-solid fa-rotate-right"></i> Refresh
+                                </button>
+                            </div>
+                            <table class="grid-table">
+                                <thead><tr><th>User</th><th>Connected At</th><th>Duration</th></tr></thead>
+                                <tbody id="admin-sessions-table"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Admin: Logs sub-tab -->
+                    <div id="admin-sub-logs" class="admin-sub" style="display:none;">
+                        <div class="page-header">
+                            <h1>Activity Log</h1>
+                            <p class="subtitle">Recent server events and system messages.</p>
+                        </div>
+                        <div class="section-card">
+                            <div class="section-card-header">
+                                Server Log
+                                <button class="btn-secondary" style="margin-left:auto;padding:4px 10px;font-size:12px;" onclick="refreshAdminLogs()">
+                                    <i class="fa-solid fa-rotate-right"></i> Refresh
+                                </button>
+                            </div>
+                            <div class="log-output" id="admin-logs">Loading…</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tab: Settings -->
+            <section id="tab-settings" class="tab-content">
+                <div class="page-pane">
+                    <div class="page-header">
+                        <h1>Settings</h1>
+                        <p class="subtitle">Manage your profile, avatar, and account details.</p>
+                    </div>
+
+                    <!-- Profile card with avatar -->
+                    <div class="settings-card">
+                        <div class="settings-card-header">Profile</div>
+                        <div class="settings-card-body">
+                            <!-- Avatar upload section -->
+                            <div class="avatar-upload-row">
+                                <div class="avatar-preview-wrap">
+                                    <div class="avatar-preview" id="settings-avatar-preview">
+                                        <img id="settings-avatar-img" src="" alt="" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:50%;">
+                                        <span id="settings-avatar-initial">U</span>
+                                    </div>
+                                    <label for="avatar-file-input" class="avatar-upload-btn" title="Upload photo">
+                                        <i class="fa-solid fa-camera"></i>
+                                    </label>
+                                    <input type="file" id="avatar-file-input" accept="image/*" style="display:none;">
+                                </div>
+                                <div class="avatar-upload-info">
+                                    <p class="avatar-upload-hint">Upload a profile photo (max 2 MB)</p>
+                                    <p class="avatar-upload-hint" style="color:var(--text-3);font-size:11px;">JPG, PNG, GIF, WEBP</p>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Username</label>
+                                <input type="text" id="settings-username" readonly />
+                            </div>
+                            <div class="form-group">
+                                <label>Home Node</label>
+                                <input type="text" id="settings-node" readonly />
+                            </div>
+                            <div class="form-group">
+                                <label>Display Name</label>
+                                <input type="text" id="settings-displayname" placeholder="Your display name" autocomplete="off" />
+                            </div>
+                            <div class="form-group">
+                                <label>Bio</label>
+                                <input type="text" id="settings-bio" placeholder="Tell others about yourself…" autocomplete="off" />
+                            </div>
+                            <button class="btn-primary" style="width:auto;padding:8px 20px;" id="settings-save-btn">Save Changes</button>
+                            <div id="settings-save-msg" style="font-size:12px;color:var(--green);display:none;margin-top:4px;">✓ Saved successfully</div>
+                            <button id="logout-btn" onclick="logout()" style="margin-top:18px;width:auto;padding:8px 20px;background:transparent;border:1px solid var(--danger,#e05c5c);color:var(--danger,#e05c5c);border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;transition:background 0.2s,color 0.2s;" onmouseover="this.style.background='var(--danger,#e05c5c)';this.style.color='#fff'" onmouseout="this.style.background='transparent';this.style.color='var(--danger,#e05c5c)'">⏻ Sign Out</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+</div>
+
+<!-- New Group Modal -->
+<div id="group-modal" class="modal-overlay" style="display:none;">
+    <div class="modal-card">
+        <div class="modal-header">
+            <h2>Create New Group</h2>
+            <button id="modal-close" class="modal-close-btn"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="form-group">
+            <label>Group Name</label>
+            <input type="text" id="group-name-input" placeholder="e.g. Dev Team" autocomplete="off" />
+        </div>
+        <div class="form-group">
+            <label>Add Members <span style="font-weight:400;text-transform:none;letter-spacing:0;">(user@node)</span></label>
+            <div style="display:flex;gap:8px;">
+                <input type="text" id="member-handle-input" placeholder="alice@node3" autocomplete="off" style="flex:1;" />
+                <button type="button" id="add-member-btn" class="btn-secondary" style="white-space:nowrap;flex-shrink:0;">Add</button>
+            </div>
+        </div>
+        <div id="member-chips" class="member-chips"></div>
+        <div class="modal-footer">
+            <button type="button" id="modal-cancel" class="btn-secondary">Cancel</button>
+            <button type="button" id="create-group-btn" class="btn-primary" style="width:auto;">Create Group</button>
+        </div>
+    </div>
+</div>
+
+<!-- Profile Viewer Modal -->
+<div id="profile-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeProfileModal()">
+    <div class="profile-modal-card" id="profile-modal-card">
+        <button class="modal-close-btn profile-modal-close" onclick="closeProfileModal()"><i class="fa-solid fa-xmark"></i></button>
+
+        <!-- Banner / header area -->
+        <div class="profile-modal-banner">
+            <div class="profile-modal-avatar" id="pm-avatar-wrap">
+                <img id="pm-avatar-img" src="" alt="" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:50%;" />
+                <span id="pm-avatar-initial" style="font-size:32px;font-weight:700;"></span>
+            </div>
+        </div>
+
+        <!-- Info body -->
+        <div class="profile-modal-body">
+            <div class="profile-modal-names">
+                <span class="profile-modal-displayname" id="pm-displayname"></span>
+                <span class="profile-modal-handle" id="pm-handle"></span>
+            </div>
+            <p class="profile-modal-bio" id="pm-bio"></p>
+            <div class="profile-modal-node" id="pm-node-row">
+                <i class="fa-solid fa-hexagon-nodes"></i>
+                <span id="pm-node"></span>
+            </div>
+            <div class="profile-modal-actions" id="pm-actions"></div>
+        </div>
+    </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
