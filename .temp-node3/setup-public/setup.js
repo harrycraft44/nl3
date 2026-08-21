@@ -1,6 +1,6 @@
 const nodeNameInput = document.getElementById('nodeName');
-const nameStatus    = document.getElementById('name-status');
-const submitBtn     = document.querySelector('button[type="submit"]');
+const nameStatus = document.getElementById('name-status');
+const submitBtn = document.querySelector('button[type="submit"]');
 
 let debounceTimer = null;
 let nameIsValid = false; // tracks whether the current name passed the check
@@ -20,16 +20,16 @@ function resetStatus() {
 async function checkName(name) {
     if (!name) { resetStatus(); return; }
 
-    setStatus('checking', '⏳ Checking availability...');
+    setStatus('checking', 'Checking availability...');
     submitBtn.disabled = true;
     nameIsValid = false;
 
     try {
-        const res  = await fetch(`/api/check-name?name=${encodeURIComponent(name)}`);
+        const res = await fetch(`/api/check-name?name=${encodeURIComponent(name)}`);
         const data = await res.json();
 
         if (data.available && !data.warning) {
-            setStatus('available', '✓ Name is available');
+            setStatus('available', 'Name is available');
             nameIsValid = true;
             submitBtn.disabled = false;
         } else if (data.available && data.warning) {
@@ -61,8 +61,8 @@ nodeNameInput.addEventListener('input', () => {
 document.getElementById('setup-form').addEventListener('submit', async (e) => {
     e.preventDefault();
 
-    const nodeType  = document.getElementById('nodeType').value;
-    const nodeName  = nodeNameInput.value.trim();
+    const nodeType = document.getElementById('nodeType').value;
+    const nodeName = nodeNameInput.value.trim();
     const adminUser = document.getElementById('adminUser').value;
     const adminPass = document.getElementById('adminPass').value;
 
@@ -80,21 +80,21 @@ document.getElementById('setup-form').addEventListener('submit', async (e) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nodeType, nodeName, adminUser, adminPass })
     })
-    .then(res => res.json())
-    .then(data => {
-        if (data.status === 'ok') {
-            setStatus('available', '✓ Setup complete — redirecting...');
-            setTimeout(() => { window.location.href = '/'; }, 2000);
-        } else {
-            setStatus('taken', '✗ Setup failed: ' + data.error);
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'ok') {
+                setStatus('available', '✓ Setup complete — redirecting...');
+                setTimeout(() => { window.location.href = '/'; }, 2000);
+            } else {
+                setStatus('taken', '✗ Setup failed: ' + data.error);
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Install Node';
+            }
+        })
+        .catch(err => {
+            setStatus('taken', '✗ Network error during setup.');
             submitBtn.disabled = false;
             submitBtn.textContent = 'Install Node';
-        }
-    })
-    .catch(err => {
-        setStatus('taken', '✗ Network error during setup.');
-        submitBtn.disabled = false;
-        submitBtn.textContent = 'Install Node';
-        console.error(err);
-    });
+            console.error(err);
+        });
 });

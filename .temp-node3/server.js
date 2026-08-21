@@ -6,7 +6,56 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const multer = require('multer');
+const cookieParser = require('cookie-parser');
 const db = require('./database');
+
+// ── Session token helpers ──────────────────────────────────────────────────
+// A simple, self-contained signed-token scheme (no external JWT lib needed).
+// Token format (base64url): payload.signature
+// Payload is JSON: { username, exp }  |  Signature = HMAC-SHA256(payload, secret)
+const TOKEN_SECRET = (() => {
+    const cfgPath = path.join(__dirname, 'config.json');
+    let cfg = {};
+    if (fs.existsSync(cfgPath)) { try { cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8')); } catch (e) {} }
+    if (!cfg.tokenSecret) {
+        cfg.tokenSecret = crypto.randomBytes(32).toString('hex');
+        fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+    }
+    return cfg.tokenSecret;
+})();
+
+const TOKEN_COOKIE  = 'nl_session';
+const TOKEN_MAX_AGE = 7 * 24 * 60 * 60; // 7 days in seconds
+
+function createToken(username) {
+    const payload = Buffer.from(JSON.stringify({
+        username,
+        exp: Math.floor(Date.now() / 1000) + TOKEN_MAX_AGE
+    })).toString('base64url');
+    const sig = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('base64url');
+    return `${payload}.${sig}`;
+}
+
+function verifyToken(token) {
+    if (!token || typeof token !== 'string') return null;
+    const [payload, sig] = token.split('.');
+    if (!payload || !sig) return null;
+    const expected = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('base64url');
+    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+    try {
+        const data = JSON.parse(Buffer.from(payload, 'base64url').toString());
+        if (data.exp < Math.floor(Date.now() / 1000)) return null; // expired
+        return data;
+    } catch (e) { return null; }
+}
+
+function setSessionCookie(res, username) {
+    res.cookie(TOKEN_COOKIE, createToken(username), {
+        httpOnly: true,
+        sameSite: 'Strict',
+        maxAge: TOKEN_MAX_AGE * 1000 // ms
+    });
+}
 
 // Avatar upload storage
 const avatarStorage = multer.diskStorage({
@@ -48,7 +97,13 @@ function serverLog(msg) {
 }
 
 let config = {};
-let isInstalled = fs.existsSync(CONFIG_FILE);
+let isInstalled = (() => {
+    if (!fs.existsSync(CONFIG_FILE)) return false;
+    try {
+        const cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+        return !!(cfg.nodeName); // only "installed" if setup has been completed
+    } catch (e) { return false; }
+})();
 
 const PORT = process.env.PORT || 3001;
 const app = express();
@@ -57,6 +112,7 @@ const io = new Server(server, { cors: { origin: '*' } });
 
 // Middleware to serve Setup or Main app
 app.use(express.json());
+app.use(cookieParser());
 app.use((req, res, next) => {
     if (!isInstalled) {
         if (req.path === '/api/setup' && req.method === 'POST') {
@@ -226,6 +282,51 @@ function initializeChatApp() {
                 io.to(targetSocketId).emit('message_error', { error, toUser, toNode });
             }
         });
+
+        // ── Call signalling: Federation Node → Browser ───────────────────────
+        // For each event, find the target local user's socket and forward.
+
+        // An incoming call arrives for a local user
+        cnodeSocket.on('incoming_call', (data) => {
+            const sid = localUsers.get(data.toUser);
+            if (sid) io.to(sid).emit('incoming_call', data);
+        });
+
+        // Answer SDP arrives for the caller
+        cnodeSocket.on('call_answered', (data) => {
+            const sid = localUsers.get(data.toUser);
+            if (sid) io.to(sid).emit('call_answered', data);
+        });
+
+        // Callee rejected the call
+        cnodeSocket.on('call_rejected', (data) => {
+            const sid = localUsers.get(data.toUser);
+            if (sid) io.to(sid).emit('call_rejected', data);
+        });
+
+        // Remote party hung up
+        cnodeSocket.on('call_ended', (data) => {
+            const sid = localUsers.get(data.toUser);
+            if (sid) io.to(sid).emit('call_ended', data);
+        });
+
+        // ICE candidate for a local user
+        cnodeSocket.on('call_ice', (data) => {
+            const sid = localUsers.get(data.toUser);
+            if (sid) io.to(sid).emit('call_ice', data);
+        });
+
+        // Group call signalling — deliver to the specific local target user
+        cnodeSocket.on('group_call_signal', (data) => {
+            const sid = localUsers.get(data.toUser);
+            if (sid) io.to(sid).emit('group_call_signal', data);
+        });
+
+        // Call error (e.g. target node offline)
+        cnodeSocket.on('call_error', (data) => {
+            // Notify all local users of the error (rare — only if target node offline)
+            localUsers.forEach((sid) => io.to(sid).emit('call_error', data));
+        });
     }
 }
 
@@ -300,6 +401,29 @@ app.get('/api/peers', (req, res) => {
     }
 });
 
+// ── Session endpoints ──────────────────────────────────────────────────────
+
+// Verify existing session cookie — used by the client on page load
+app.get('/api/me', (req, res) => {
+    const data = verifyToken(req.cookies[TOKEN_COOKIE]);
+    if (!data) return res.status(401).json({ error: 'Not authenticated' });
+    // Also confirm the user still exists and isn't banned
+    db.getUserProfile(data.username, (err, profile) => {
+        if (err || !profile) return res.status(401).json({ error: 'User not found' });
+        if (profile.banned === 1) {
+            res.clearCookie(TOKEN_COOKIE);
+            return res.status(403).json({ error: 'Your account has been banned.' });
+        }
+        res.json({ status: 'ok', username: data.username, nodeName: config.nodeName });
+    });
+});
+
+// Logout — clear the session cookie
+app.post('/api/logout', (req, res) => {
+    res.clearCookie(TOKEN_COOKIE);
+    res.json({ status: 'ok' });
+});
+
 // Login
 app.post('/api/login', (req, res) => {
     const { username, password } = req.body;
@@ -313,6 +437,7 @@ app.post('/api/login', (req, res) => {
             if (!err2 && profile && profile.banned === 1) {
                 return res.status(403).json({ error: 'Your account has been banned from this node.' });
             }
+            setSessionCookie(res, username);
             res.json({ status: 'ok', username, nodeName: config.nodeName });
         });
     });
@@ -325,6 +450,7 @@ app.post('/api/signup', (req, res) => {
 
     db.registerUser(username, password, displayName, bio, (err) => {
         if (err) return res.status(400).json({ error: err.message });
+        setSessionCookie(res, username);
         res.json({ status: 'ok', username, nodeName: config.nodeName });
     });
 });
@@ -518,6 +644,81 @@ io.on('connection', (socket) => {
             serverLog(`Local user disconnected: ${loggedInUser}`);
         }
     });
+
+    // ── Call signalling: Browser → Federation Node ───────────────────────────
+
+    // Initiate a DM call
+    socket.on('call_user', ({ toUser, toNode, offer, callId }) => {
+        if (!loggedInUser || !cnodeSocket) return;
+        cnodeSocket.emit('call_invite', {
+            callId,
+            fromUser: loggedInUser,
+            fromNode: config.nodeName,
+            toUser,
+            toNode,
+            offer
+        });
+    });
+
+    // Send answer SDP to caller
+    socket.on('call_answer', ({ toUser, toNode, answer, callId }) => {
+        if (!loggedInUser || !cnodeSocket) return;
+        cnodeSocket.emit('call_answer', {
+            callId,
+            fromUser: loggedInUser,
+            fromNode: config.nodeName,
+            toUser,
+            toNode,
+            answer
+        });
+    });
+
+    // Reject incoming call
+    socket.on('call_reject', ({ toUser, toNode, callId }) => {
+        if (!loggedInUser || !cnodeSocket) return;
+        cnodeSocket.emit('call_reject', {
+            callId,
+            fromUser: loggedInUser,
+            fromNode: config.nodeName,
+            toUser,
+            toNode
+        });
+    });
+
+    // Hang up (DM call)
+    socket.on('call_hangup', ({ toUser, toNode, callId }) => {
+        if (!loggedInUser || !cnodeSocket) return;
+        cnodeSocket.emit('call_hangup', {
+            callId,
+            fromUser: loggedInUser,
+            fromNode: config.nodeName,
+            toUser,
+            toNode
+        });
+    });
+
+    // ICE candidate (DM call)
+    socket.on('call_ice', ({ toUser, toNode, candidate, callId }) => {
+        if (!loggedInUser || !cnodeSocket) return;
+        cnodeSocket.emit('call_ice', {
+            callId,
+            fromUser: loggedInUser,
+            fromNode: config.nodeName,
+            toUser,
+            toNode,
+            candidate
+        });
+    });
+
+    // Group call signalling (offer/answer/ICE between group members)
+    socket.on('group_call_signal', (data) => {
+        if (!loggedInUser || !cnodeSocket) return;
+        cnodeSocket.emit('group_call_signal', {
+            ...data,
+            fromUser: loggedInUser,
+            fromNode: config.nodeName
+        });
+    });
 });
 
 // ── Profile / Avatar APIs ──────────────────────────────────────────────────
@@ -542,6 +743,22 @@ app.get('/api/profile', (req, res) => {
     db.getUserProfile(username, (err, profile) => {
         if (err || !profile) return res.status(404).json({ error: 'User not found' });
         res.json(profile);
+    });
+});
+
+// Public profile lookup — any logged-in user can view another local user's profile
+app.get('/api/profile/:username', (req, res) => {
+    const requester = req.headers['x-username'] || (verifyToken(req.cookies[TOKEN_COOKIE]) || {}).username;
+    if (!requester) return res.status(401).json({ error: 'Not authenticated' });
+    db.getUserProfile(req.params.username, (err, profile) => {
+        if (err || !profile) return res.status(404).json({ error: 'User not found' });
+        // Return public-safe fields only (no banned status exposed)
+        res.json({
+            username: profile.username,
+            display_name: profile.display_name,
+            bio: profile.bio,
+            avatar_url: profile.avatar_url
+        });
     });
 });
 

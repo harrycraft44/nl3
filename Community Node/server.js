@@ -97,7 +97,13 @@ function serverLog(msg) {
 }
 
 let config = {};
-let isInstalled = fs.existsSync(CONFIG_FILE);
+let isInstalled = (() => {
+    if (!fs.existsSync(CONFIG_FILE)) return false;
+    try {
+        const cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+        return !!(cfg.nodeName); // only "installed" if setup has been completed
+    } catch (e) { return false; }
+})();
 
 const PORT = process.env.PORT || 3001;
 const app = express();

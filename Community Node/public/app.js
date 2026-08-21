@@ -349,6 +349,14 @@ function startChat(tUser, tNode) {
         <div class="chat-header-info">
             <h2><button class="profile-name-btn" onclick="openProfile('${tUser}','${tNode}')">${tUser}</button></h2>
             <p class="subtitle">@${tNode}</p>
+        </div>
+        <div class="chat-header-actions">
+            <button class="call-icon-btn" title="Voice call" onclick="CallManager.startCall('${tUser}','${tNode}',false)">
+                <i class="fa-solid fa-phone"></i>
+            </button>
+            <button class="call-icon-btn" title="Video call" onclick="CallManager.startCall('${tUser}','${tNode}',true)">
+                <i class="fa-solid fa-video"></i>
+            </button>
         </div>`;
     messageForm.style.display = 'flex';
     loadMessages();
@@ -571,6 +579,11 @@ function openGroup(groupId) {
         <div class="chat-header-info">
             <h2>${group.name}</h2>
             <p class="subtitle">${group.members.length} members — ${memberStr}</p>
+        </div>
+        <div class="chat-header-actions">
+            <button class="call-icon-btn" title="Start group call" onclick="CallManager.startGroupCall('${groupId}')">
+                <i class="fa-solid fa-video"></i>
+            </button>
         </div>`;
     groupMessageForm.style.display='flex';
     groupMessagesEl.innerHTML='';
@@ -808,8 +821,7 @@ window.adminUnban = function(username) {
 // PROFILE VIEWER
 // ═══════════════════════════════════════════════════════
 function openProfile(username, nodeName) {
-    const modal    = document.getElementById('profile-modal');
-    const card     = document.getElementById('profile-modal-card');
+    const modal        = document.getElementById('profile-modal');
     const avatarImg    = document.getElementById('pm-avatar-img');
     const avatarInit   = document.getElementById('pm-avatar-initial');
     const displayname  = document.getElementById('pm-displayname');
@@ -825,27 +837,43 @@ function openProfile(username, nodeName) {
     avatarInit.textContent   = username.charAt(0).toUpperCase();
     displayname.textContent  = username;
     handle.textContent       = '@' + username;
-    bio.textContent          = '';
-    nodeEl.textContent       = nodeName;
+    bio.textContent          = 'No bio provided.';
+    nodeEl.textContent       = '@' + nodeName;
     actions.innerHTML        = '';
 
     modal.style.display = 'flex';
     document.addEventListener('keydown', profileEscListener);
 
-    // Add "Send Message" button if it's not ourselves
+    // Add buttons if it's not ourselves
     if (username !== myUsername || nodeName !== myNodeName) {
         const msgBtn = document.createElement('button');
         msgBtn.className = 'btn-primary';
-        msgBtn.style.cssText = 'width:auto;padding:8px 18px;font-size:13px;';
-        msgBtn.innerHTML = '<i class="fa-solid fa-message" style="margin-right:6px;"></i>Send Message';
+        msgBtn.innerHTML = '<i class="fa-solid fa-message" style="margin-right:6px;"></i>Message';
         msgBtn.onclick = () => {
             closeProfileModal();
-            // Switch to Messages tab first
             const msgRailBtn = document.querySelector('.rail-btn[data-tab="messages"]');
             if (msgRailBtn) msgRailBtn.click();
             startChat(username, nodeName);
         };
         actions.appendChild(msgBtn);
+
+        const callBtn = document.createElement('button');
+        callBtn.className = 'btn-secondary';
+        callBtn.innerHTML = '<i class="fa-solid fa-phone" style="margin-right:6px;"></i>Call';
+        callBtn.onclick = () => {
+            closeProfileModal();
+            CallManager.startCall(username, nodeName, false);
+        };
+        actions.appendChild(callBtn);
+
+        const vidBtn = document.createElement('button');
+        vidBtn.className = 'btn-secondary';
+        vidBtn.innerHTML = '<i class="fa-solid fa-video" style="margin-right:6px;"></i>Video';
+        vidBtn.onclick = () => {
+            closeProfileModal();
+            CallManager.startCall(username, nodeName, true);
+        };
+        actions.appendChild(vidBtn);
     }
 
     // Fetch full profile if this user is on the same node
@@ -856,7 +884,7 @@ function openProfile(username, nodeName) {
             if (!p) return;
             displayname.textContent = p.display_name || username;
             handle.textContent      = '@' + p.username;
-            bio.textContent         = p.bio || '';
+            bio.textContent         = p.bio || 'No bio provided.';
             if (p.avatar_url) {
                 avatarImg.src            = p.avatar_url;
                 avatarImg.style.display  = 'block';
@@ -1102,11 +1130,15 @@ const CallManager = (() => {
         groupCallId = null;
         isMuted     = false;
         isCamOff    = false;
-        // Reset control icons
+        // Reset control icons & labels
         const mi = document.getElementById('ctrl-mic-icon');
         const ci = document.getElementById('ctrl-cam-icon');
+        const ml = document.getElementById('ctrl-mic-label');
+        const cl = document.getElementById('ctrl-cam-label');
         if (mi) { mi.className = 'fa-solid fa-microphone'; mi.closest('button').classList.remove('ctrl-active'); }
         if (ci) { ci.className = 'fa-solid fa-video';      ci.closest('button').classList.remove('ctrl-active'); }
+        if (ml) ml.textContent = 'Mute';
+        if (cl) cl.textContent = 'Camera';
     }
 
     // ── Start a DM call (outgoing) ───────────────────────
@@ -1248,14 +1280,17 @@ const CallManager = (() => {
         localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
         const icon = document.getElementById('ctrl-mic-icon');
         const btn  = document.getElementById('ctrl-mic');
+        const label = document.getElementById('ctrl-mic-label');
         if (isMuted) {
             icon.className = 'fa-solid fa-microphone-slash';
             btn.classList.add('ctrl-active');
             btn.title = 'Unmute microphone';
+            if (label) label.textContent = 'Unmute';
         } else {
             icon.className = 'fa-solid fa-microphone';
             btn.classList.remove('ctrl-active');
             btn.title = 'Mute microphone';
+            if (label) label.textContent = 'Mute';
         }
     }
 
@@ -1265,14 +1300,17 @@ const CallManager = (() => {
         localStream.getVideoTracks().forEach(t => t.enabled = !isCamOff);
         const icon = document.getElementById('ctrl-cam-icon');
         const btn  = document.getElementById('ctrl-cam');
+        const label = document.getElementById('ctrl-cam-label');
         if (isCamOff) {
             icon.className = 'fa-solid fa-video-slash';
             btn.classList.add('ctrl-active');
             btn.title = 'Turn camera on';
+            if (label) label.textContent = 'Cam Off';
         } else {
             icon.className = 'fa-solid fa-video';
             btn.classList.remove('ctrl-active');
             btn.title = 'Turn camera off';
+            if (label) label.textContent = 'Camera';
         }
     }
 
@@ -1383,17 +1421,3 @@ const CallManager = (() => {
 })();
 
 window.CallManager = CallManager;
-
-// Show/hide DM call buttons when a conversation is opened
-const _origStartChat = startChat;
-function startChat(tUser, tNode) {
-    _origStartChat(tUser, tNode);
-    document.getElementById('dm-call-actions').style.display = 'flex';
-}
-
-// Show/hide group call button when a group is opened
-const _origOpenGroup = openGroup;
-function openGroup(groupId) {
-    _origOpenGroup(groupId);
-    document.getElementById('group-call-actions').style.display = 'flex';
-}
